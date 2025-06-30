@@ -1,4 +1,5 @@
 import NextAuth from "next-auth";
+
 import GitHub from "next-auth/providers/github";
 import type { JWT } from "next-auth/jwt";
 import type { Session, User, Profile } from "next-auth";
@@ -15,25 +16,34 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     }),
   ],
   callbacks: {
-    async signIn(params: { user: User; profile?: Profile }) {
-      const { user, profile } = params;
-      const { name, email, image } = user ?? {};
-      const { id, login, bio } = profile ?? {};
+    async signIn({ user, profile }: { user: User; profile?: Profile }) {
+      if (!profile) {
+        console.error("❌ GitHub profile is missing.");
+        return false;
+      }
+
+      const id = profile.id?.toString();
+      if (!id) {
+        console.error("❌ GitHub ID is missing.");
+        return false;
+      }
 
       try {
-        const existingUser = await client.withConfig({ useCdn: false }).fetch(AUTHOR_BY_GITHUB_ID_QUERY, { id });
+        const existingUser = await client
+          .withConfig({ useCdn: false })
+          .fetch(AUTHOR_BY_GITHUB_ID_QUERY, { id });
 
         if (!existingUser) {
           console.log("🆕 Creating new author in Sanity...");
 
           await writeClient.create({
             _type: "author",
-            _id: id!.toString(),
-            name,
-            username: login,
-            email,
-            image,
-            bio: bio || "",
+            _id: id,
+            name: user.name ?? "",
+            username: profile.login ?? "",
+            email: user.email ?? "",
+            image: user.image ?? "",
+            bio: profile.bio ?? "",
           });
 
           console.log("✅ Author created successfully.");
@@ -46,26 +56,26 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       }
     },
 
-    async jwt(params: {
-      token: JWT;
-      account?: any;
-      profile?: Profile;
-    }) {
-      const { token, account, profile } = params;
-      if (account && profile) {
+    async jwt({ token, profile }: { token: JWT; profile?: Profile }) {
+      if (profile?.id) {
         const user = await client
           .withConfig({ useCdn: false })
-          .fetch(AUTHOR_BY_GITHUB_ID_QUERY, {
-            id: profile.id,
-          });
+          .fetch(AUTHOR_BY_GITHUB_ID_QUERY, { id: profile.id });
         token.id = user?._id;
       }
       return token;
     },
 
-    async session(params: { session: Session; token: JWT & { id?: string } }) {
-      const { session, token } = params;
-      Object.assign(session, { id: token.id });
+    async session({
+      session,
+      token,
+    }: {
+      session: Session;
+      token: JWT & { id?: string };
+    }) {
+      if (token.id) {
+        (session as any).id = token.id;
+      }
       return session;
     },
   },
